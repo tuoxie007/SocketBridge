@@ -1,14 +1,20 @@
 //
-//  SocketBridge.m
-//  SocketBridge
+//  HSUShadowsocksProxy.m
+//  Test
 //
-//  Created by Jason Hsu on 13-9-17.
+//  Created by Jason Hsu on 13-9-7.
 //  Copyright (c) 2013年 Jason Hsu. All rights reserved.
 //
 
-#import "SocketBridge.h"
+#import "HSUShadowsocksProxy.h"
+#import "GCDAsyncSocket.h"
+#include "encrypt.h"
 
 @interface HSUShadowsocksPipeline : NSObject
+{
+ @public
+    struct encryption_ctx encryptionContext;
+}
 
 @property (nonatomic, strong) GCDAsyncSocket *localSocket;
 @property (nonatomic, strong) GCDAsyncSocket *remoteSocket;
@@ -19,7 +25,7 @@
 @end
 
 
-@implementation SocketBridge
+@implementation HSUShadowsocksProxy
 {
     dispatch_queue_t _socketQueue;
     GCDAsyncSocket *_serverSocket;
@@ -56,13 +62,11 @@
     _pipelines = nil;
 }
 
-- (id)initWithRemoteHost:(NSString *)remoteHost remotePort:(NSUInteger)remotePort localPort:(NSUInteger)localPort
+- (id)init
 {
     self = [super init];
     if (self) {
-        self.remoteHost = remoteHost;
-        self.remotePort = remotePort;
-        self.localPort = localPort;
+        config_encryption("thanksgiving", "table");
     }
     return self;
 }
@@ -70,10 +74,10 @@
 - (BOOL)start
 {
     [self stop];
-    _socketQueue = dispatch_queue_create("me.tuoxie.socket-bridge", NULL);
+    _socketQueue = dispatch_queue_create("me.tuoxie.shadowsocks", NULL);
     _serverSocket = [[GCDAsyncSocket alloc] initWithDelegate:self delegateQueue:_socketQueue];
     NSError *error;
-    [_serverSocket acceptOnPort:self.localPort error:&error];
+    [_serverSocket acceptOnPort:11010 error:&error];
     if (error) {
         NSLog(@"bind failed, %@", error);
         return NO;
@@ -96,13 +100,16 @@
 
 - (void)socket:(GCDAsyncSocket *)sock didAcceptNewSocket:(GCDAsyncSocket *)newSocket
 {
-    //NSLog(@"new request");
+    NSLog(@"new request");
     HSUShadowsocksPipeline *pipeline = [[HSUShadowsocksPipeline alloc] init];
     pipeline.localSocket = newSocket;
     
     GCDAsyncSocket *remoteSocket = [[GCDAsyncSocket alloc] initWithDelegate:self delegateQueue:_socketQueue];
-    [remoteSocket connectToHost:self.remoteHost onPort:self.localPort error:nil];
+    [remoteSocket connectToHost:@"106.187.45.148" onPort:22 error:nil];
     pipeline.remoteSocket = remoteSocket;
+    
+    // encrypt code
+    init_encryption(&(pipeline->encryptionContext));
     
     @synchronized(_pipelines) {
         [_pipelines addObject:pipeline];
@@ -121,12 +128,15 @@
 - (void)socket:(GCDAsyncSocket *)sock didReadData:(NSData *)data withTag:(long)tag
 {
     HSUShadowsocksPipeline *pipeline;
+    int len = data.length;
     
     @synchronized(_pipelines) {
         pipeline = [self pipelineOfRemoteSocket:sock];
     }
     if (pipeline) { // read from remote
-        //NSLog(@"remote data length: %d", data.length);
+        NSLog(@"remote data length: %d", data.length);
+        // encrypt code
+        decrypt_buf(&(pipeline->encryptionContext), (char *)data.bytes, &len);
         [pipeline.localSocket writeData:data withTimeout:-1 tag:0];
         return;
     }
@@ -135,7 +145,9 @@
         pipeline = [self pipelineOfLocalSocket:sock];
     }
     if (pipeline) { // read from local
-        //NSLog(@"local data length: %d", data.length);
+        NSLog(@"local data length: %d", data.length);
+        // encrypt code
+        encrypt_buf(&(pipeline->encryptionContext), (char *)data.bytes, &len);
         [pipeline.remoteSocket writeData:data withTimeout:-1 tag:0];
         return;
     }
@@ -169,6 +181,8 @@
         NSLog(@"remote disconnect");
         if (pipeline.localSocket.isDisconnected) {
             [_pipelines removeObject:pipeline];
+            // encrypt code
+            cleanup_encryption(&(pipeline->encryptionContext));
         } else {
             [pipeline.localSocket disconnectAfterReadingAndWriting];
         }
@@ -182,6 +196,8 @@
         NSLog(@"local disconnect");
         if (pipeline.remoteSocket.isDisconnected) {
             [_pipelines removeObject:pipeline];
+            // encrypt code
+            cleanup_encryption(&(pipeline->encryptionContext));
         } else {
             [pipeline.remoteSocket disconnectAfterReadingAndWriting];
         }

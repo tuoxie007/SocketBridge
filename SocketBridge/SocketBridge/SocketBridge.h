@@ -7,7 +7,19 @@
 //
 
 #import <Foundation/Foundation.h>
+#import "GCDAsyncSocket.h"
 
-@interface SocketBridge : NSObject
+@interface SocketBridge : NSObject <GCDAsyncSocketDelegate>
+
+@property (nonatomic, copy) NSString *remoteHost;
+@property (nonatomic, assign) NSUInteger remotePort;
+@property (nonatomic, assign) NSUInteger localPort;
+
+- (id)initWithRemoteHost:(NSString *)remoteHost
+              remotePort:(NSUInteger)remotePort
+               localPort:(NSUInteger)localPort;
+
+- (BOOL)start; // auto stop before start
+- (void)stop;
 
 @end
